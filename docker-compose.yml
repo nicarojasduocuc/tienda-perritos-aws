@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8
+    container_name: tienda-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: admin123
+      MYSQL_DATABASE: tienda_perritos
+    ports:
+      - "3306:3306"
+    volumes:
+      - dbdata:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - tienda-network
+
+  backend:
+    build: ./backend
+    container_name: tienda-backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_USER: root
+      DB_PASSWORD: admin123
+      DB_NAME: tienda_perritos
+      DB_PORT: 3306
+    ports:
+      - "3001:3001"
+    depends_on:
+      - db
+    networks:
+      - tienda-network
+
+  frontend:
+    build: ./frontend
+    container_name: tienda-frontend
+    restart: unless-stopped
+    environment:
+      BACKEND_HOST: backend
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+    networks:
+      - tienda-network
+
+networks:
+  tienda-network:
+    driver: bridge
+
+volumes:
+  dbdata:
