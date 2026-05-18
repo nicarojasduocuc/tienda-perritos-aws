@@ -1,0 +1,55 @@
+name: Deploy Database
+
+on:
+  push:
+    branches: [ "deploy" ]
+    paths: 
+      - "db/**"
+      - ".github/workflows/db-deploy.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v3
+
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build y Push de la imagen a ECR
+        env:
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          ECR_REPOSITORY: tienda-db
+          IMAGE_TAG: latest
+        run: |
+          cd db
+          echo "FROM mysql:8" > Dockerfile
+          echo "COPY init.sql /docker-entrypoint-initdb.d/" >> Dockerfile
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Despliegue automático en EC2 vía SSM
+        env:
+          INSTANCE_ID: ${{ secrets.EC2_DB_INSTANCE_ID }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+        run: |
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin '"$ECR_REGISTRY"'",
+              "docker pull '"$ECR_REGISTRY"'/tienda-db:latest",
+              "docker stop tienda-db || true",
+              "docker rm tienda-db || true",
+              "docker run -d --restart unless-stopped --name tienda-db -p 3306:3306 -e MYSQL_ROOT_PASSWORD=admin123 -e MYSQL_DATABASE=tienda_perritos -v dbdata:/var/lib/mysql '"$ECR_REGISTRY"'/tienda-db:latest"
+            ]'
